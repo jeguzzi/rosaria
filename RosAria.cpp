@@ -544,16 +544,16 @@ void RosAriaNode::publish()
   pos = robot->getPose();
   tf::poseTFToMsg(tf::Transform(tf::createQuaternionFromYaw(pos.getTh()*M_PI/180), tf::Vector3(pos.getX()/1000,
     pos.getY()/1000, 0)), position.pose.pose); //Aria returns pose in mm.
-  double s = robot->getVel()/1000; //Aria returns velocity in mm/s.
-  double va = robot->getRotVel()*M_PI/180;
-  position.twist.twist.linear.x = s;
+  double sp = robot->getVel()/1000; //Aria returns velocity in mm/s.
+  double av = robot->getRotVel()*M_PI/180;
+  position.twist.twist.linear.x = sp;
   position.twist.twist.linear.y = robot->getLatVel()/1000.0;
-  position.twist.twist.angular.z = va;
+  position.twist.twist.angular.z = av;
 
   //CHANGED: added covariance
 
-  double cs = pstd_dev_speed * pstd_dev_speed * s *s;
-  double cva = pstd_dev_angular_speed * pstd_dev_angular_speed * va * va;
+  double cs = pstd_dev_speed * pstd_dev_speed * sp *sp;
+  double cva = pstd_dev_angular_speed * pstd_dev_angular_speed * av * av;
   position.twist.covariance[0] = cs;
   position.twist.covariance[7] = cs;
   position.twist.covariance[35] = cva;
