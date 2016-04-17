@@ -31,7 +31,7 @@
 #include <sstream>
 
 
-// Node that interfaces between ROS and mobile robot base features via ARIA library. 
+// Node that interfaces between ROS and mobile robot base features via ARIA library.
 //
 // RosAria uses the roscpp client library, see http://www.ros.org/wiki/roscpp for
 // information, tutorials and documentation.
@@ -40,7 +40,7 @@ class RosAriaNode
   public:
     RosAriaNode(ros::NodeHandle n);
     virtual ~RosAriaNode();
-    
+
   public:
     int Setup();
     void cmdvel_cb( const geometry_msgs::TwistConstPtr &);
@@ -101,29 +101,35 @@ class RosAriaNode
     std::string frame_id_sonar;
 
     // flag indicating whether sonar was enabled or disabled on the robot
-    bool sonar_enabled; 
+    bool sonar_enabled;
 
-    // enable and publish sonar topics. set to true when first subscriber connects, set to false when last subscriber disconnects. 
-    bool publish_sonar; 
+    // enable and publish sonar topics. set to true when first subscriber connects, set to false when last subscriber disconnects.
+    bool publish_sonar;
     bool publish_sonar_pointcloud2;
 
     // Debug Aria
     bool debug_aria;
     std::string aria_log_filename;
-    
+
     // Robot Parameters
     int TicksMM, DriftFactor, RevCount;  // Odometry Calibration Settings
-    
+
     // dynamic_reconfigure
     dynamic_reconfigure::Server<rosaria::RosAriaConfig> *dynamic_reconfigure_server;
 
     // whether to publish aria lasers
     bool publish_aria_lasers;
+
+    //Changed: added twist std dev
+
+    double pstd_dev_speed;
+    double pstd_dev_angular_speed;
+    bool publish_odom_transform;
 };
 
 void RosAriaNode::readParameters()
 {
-  // Robot Parameters  
+  // Robot Parameters
   robot->lock();
   ros::NodeHandle n_("~");
   if (n_.hasParam("TicksMM"))
@@ -138,7 +144,7 @@ void RosAriaNode::readParameters()
     n_.setParam( "TicksMM", TicksMM);
     ROS_INFO("Setting TicksMM from robot controller stored configuration: %d", TicksMM);
   }
-  
+
   if (n_.hasParam("DriftFactor"))
   {
     n_.getParam( "DriftFactor", DriftFactor);
@@ -151,7 +157,7 @@ void RosAriaNode::readParameters()
     n_.setParam( "DriftFactor", DriftFactor);
     ROS_INFO("Setting DriftFactor from robot controller stored configuration: %d", DriftFactor);
   }
-  
+
   if (n_.hasParam("RevCount"))
   {
     n_.getParam( "RevCount", RevCount);
@@ -179,21 +185,21 @@ void RosAriaNode::dynamic_reconfigureCB(rosaria::RosAriaConfig &config, uint32_t
     TicksMM = config.TicksMM;
     robot->comInt(93, TicksMM);
   }
-  
+
   if(DriftFactor != config.DriftFactor)
   {
     ROS_INFO("Setting DriftFactor from Dynamic Reconfigure: %d -> %d ", DriftFactor, config.DriftFactor);
     DriftFactor = config.DriftFactor;
     robot->comInt(89, DriftFactor);
   }
-  
+
   if(RevCount != config.RevCount and config.RevCount > 0)
   {
     ROS_INFO("Setting RevCount from Dynamic Reconfigure: %d -> %d ", RevCount, config.RevCount);
     RevCount = config.RevCount;
     robot->comInt(88, RevCount);
   }
-  
+
   //
   // Acceleration Parameters
   //
@@ -204,14 +210,14 @@ void RosAriaNode::dynamic_reconfigureCB(rosaria::RosAriaConfig &config, uint32_t
     ROS_INFO("Setting TransAccel from Dynamic Reconfigure: %d", value);
     robot->setTransAccel(value);
   }
-  
+
   value = config.trans_decel * 1000;
   if(value != robot->getTransDecel() and value > 0)
   {
     ROS_INFO("Setting TransDecel from Dynamic Reconfigure: %d", value);
     robot->setTransDecel(value);
-  } 
-  
+  }
+
   value = config.lat_accel * 1000;
   if(value != robot->getLatAccel() and value > 0)
   {
@@ -219,7 +225,7 @@ void RosAriaNode::dynamic_reconfigureCB(rosaria::RosAriaConfig &config, uint32_t
     if (robot->getAbsoluteMaxLatAccel() > 0 )
       robot->setLatAccel(value);
   }
-  
+
   value = config.lat_decel * 1000;
   if(value != robot->getLatDecel() and value > 0)
   {
@@ -227,20 +233,20 @@ void RosAriaNode::dynamic_reconfigureCB(rosaria::RosAriaConfig &config, uint32_t
     if (robot->getAbsoluteMaxLatDecel() > 0 )
       robot->setLatDecel(value);
   }
-  
+
   value = config.rot_accel * 180/M_PI;
   if(value != robot->getRotAccel() and value > 0)
   {
     ROS_INFO("Setting RotAccel from Dynamic Reconfigure: %d", value);
     robot->setRotAccel(value);
   }
-  
+
   value = config.rot_decel * 180/M_PI;
   if(value != robot->getRotDecel() and value > 0)
   {
     ROS_INFO("Setting RotDecel from Dynamic Reconfigure: %d", value);
     robot->setRotDecel(value);
-  } 
+  }
   robot->unlock();
 }
 
@@ -262,13 +268,13 @@ void RosAriaNode::sonarConnectCb()
   robot->unlock();
 }
 
-RosAriaNode::RosAriaNode(ros::NodeHandle nh) : 
+RosAriaNode::RosAriaNode(ros::NodeHandle nh) :
   n(nh),
-  serial_port(""), serial_baud(0), 
+  serial_port(""), serial_baud(0),
   conn(NULL), laserConnector(NULL), robot(NULL),
   myPublishCB(this, &RosAriaNode::publish),
   sonar_enabled(false), publish_sonar(false), publish_sonar_pointcloud2(false),
-  debug_aria(false), 
+  debug_aria(false),
   TicksMM(-1), DriftFactor(-1), RevCount(-1),
   publish_aria_lasers(false)
 {
@@ -288,6 +294,12 @@ RosAriaNode::RosAriaNode(ros::NodeHandle nh) :
 
   // whether to connect to lasers using aria
   n.param("publish_aria_lasers", publish_aria_lasers, false);
+
+  // CHANGED: added std dev for covariance
+  n.param("std_dev_speed", pstd_dev_speed, 0.05);
+  n.param("std_dev_angular_speed", pstd_dev_angular_speed, 0.1);
+  n.param("publish_odom_transform", publish_odom_transform, false);
+
 
   // Figure out what frame_id's to use. if a tf_prefix param is specified,
   // it will be added to the beginning of the frame_ids.
@@ -310,7 +322,7 @@ RosAriaNode::RosAriaNode(ros::NodeHandle nh) :
   // See ros::NodeHandle API docs.
   pose_pub = n.advertise<nav_msgs::Odometry>("pose",1000);
   bumpers_pub = n.advertise<rosaria::BumperState>("bumper_state",1000);
-  sonar_pub = n.advertise<sensor_msgs::PointCloud>("sonar", 50, 
+  sonar_pub = n.advertise<sensor_msgs::PointCloud>("sonar", 50,
       boost::bind(&RosAriaNode::sonarConnectCb, this),
       boost::bind(&RosAriaNode::sonarConnectCb, this));
   sonar_pointcloud2_pub = n.advertise<sensor_msgs::PointCloud2>("sonar_pointcloud2", 50,
@@ -329,7 +341,7 @@ RosAriaNode::RosAriaNode(ros::NodeHandle nh) :
   // advertise enable/disable services
   enable_srv = n.advertiseService("enable_motors", &RosAriaNode::enable_motors_cb, this);
   disable_srv = n.advertiseService("disable_motors", &RosAriaNode::disable_motors_cb, this);
-  
+
   veltime = ros::Time::now();
 }
 
@@ -380,7 +392,7 @@ int RosAriaNode::Setup()
     snprintf(tmp, 100, "%d", serial_baud);
     args->add(tmp);
   }
-  
+
   if( debug_aria )
   {
     // turn on all ARIA debugging
@@ -414,7 +426,7 @@ int RosAriaNode::Setup()
 
   // Start dynamic_reconfigure server
   dynamic_reconfigure_server = new dynamic_reconfigure::Server<rosaria::RosAriaConfig>;
-  
+
   // Setup Parameter Minimums
   rosaria::RosAriaConfig dynConf_min;
   dynConf_min.trans_accel = robot->getAbsoluteMaxTransAccel() / 1000;
@@ -425,15 +437,15 @@ int RosAriaNode::Setup()
   dynConf_min.lat_decel = ((robot->getAbsoluteMaxLatDecel() > 0.0) ? robot->getAbsoluteMaxLatDecel() : 0.1) / 1000;
   dynConf_min.rot_accel = robot->getAbsoluteMaxRotAccel() * M_PI/180;
   dynConf_min.rot_decel = robot->getAbsoluteMaxRotDecel() * M_PI/180;
-  
+
   // I'm setting these upper bounds relitivly arbitrarily, feel free to increase them.
   dynConf_min.TicksMM     = 10;
   dynConf_min.DriftFactor = -200;
   dynConf_min.RevCount    = -32760;
-  
+
   dynamic_reconfigure_server->setConfigMin(dynConf_min);
-  
-  
+
+
   rosaria::RosAriaConfig dynConf_max;
   dynConf_max.trans_accel = robot->getAbsoluteMaxTransAccel() / 1000;
   dynConf_max.trans_decel = robot->getAbsoluteMaxTransDecel() / 1000;
@@ -443,15 +455,15 @@ int RosAriaNode::Setup()
   dynConf_max.lat_decel = ((robot->getAbsoluteMaxLatDecel() > 0.0) ? robot->getAbsoluteMaxLatDecel() : 0.1) / 1000;
   dynConf_max.rot_accel = robot->getAbsoluteMaxRotAccel() * M_PI/180;
   dynConf_max.rot_decel = robot->getAbsoluteMaxRotDecel() * M_PI/180;
-  
+
   // I'm setting these upper bounds relitivly arbitrarily, feel free to increase them.
   dynConf_max.TicksMM     = 200;
   dynConf_max.DriftFactor = 200;
   dynConf_max.RevCount    = 32760;
-  
+
   dynamic_reconfigure_server->setConfigMax(dynConf_max);
-  
-  
+
+
   rosaria::RosAriaConfig dynConf_default;
   dynConf_default.trans_accel = robot->getTransAccel() / 1000;
   dynConf_default.trans_decel = robot->getTransDecel() / 1000;
@@ -463,9 +475,9 @@ int RosAriaNode::Setup()
   dynConf_default.TicksMM     = TicksMM;
   dynConf_default.DriftFactor = DriftFactor;
   dynConf_default.RevCount    = RevCount;
-  
+
   dynamic_reconfigure_server->setConfigDefault(dynConf_max);
-  
+
   dynamic_reconfigure_server->setCallback(boost::bind(&RosAriaNode::dynamic_reconfigureCB, this, _1, _2));
 
 
@@ -504,7 +516,7 @@ int RosAriaNode::Setup()
       int ln = i->first;
       std::string tfname("laser");
       if(lasers->size() > 1 || ln > 1) // no number if only one laser which is also laser 1
-        tfname += ln; 
+        tfname += ln;
       tfname += "_frame";
       ROS_INFO_NAMED("rosaria", "rosaria: Creating publisher for laser #%d named %s with tf frame name %s", ln, l->getName(), tfname.c_str());
       new LaserPublisher(l, n, true, tfname);
@@ -512,7 +524,7 @@ int RosAriaNode::Setup()
     robot->unlock();
     ROS_INFO_NAMED("rosaria", "rosaria: Done creating laser publishers");
   }
-    
+
   // subscribe to command topics
   cmdvel_sub = n.subscribe( "cmd_vel", 1, (boost::function <void(const geometry_msgs::TwistConstPtr&)>)
       boost::bind(&RosAriaNode::cmdvel_cb, this, _1 ));
@@ -532,17 +544,27 @@ void RosAriaNode::publish()
   pos = robot->getPose();
   tf::poseTFToMsg(tf::Transform(tf::createQuaternionFromYaw(pos.getTh()*M_PI/180), tf::Vector3(pos.getX()/1000,
     pos.getY()/1000, 0)), position.pose.pose); //Aria returns pose in mm.
-  position.twist.twist.linear.x = robot->getVel()/1000; //Aria returns velocity in mm/s.
+  double s = robot->getVel()/1000; //Aria returns velocity in mm/s.
+  double va = robot->getRotVel()*M_PI/180;
+  position.twist.twist.linear.x = s;
   position.twist.twist.linear.y = robot->getLatVel()/1000.0;
-  position.twist.twist.angular.z = robot->getRotVel()*M_PI/180;
-  
+  position.twist.twist.angular.z = va;
+
+  //CHANGED: added covariance
+
+  double cs = pstd_dev_speed * pstd_dev_speed * s *s;
+  double cva = pstd_dev_angular_speed * pstd_dev_angular_speed * va * va;
+  position.twist.covariance[0] = cs;
+  position.twist.covariance[7] = cs;
+  position.twist.covariance[35] = cva;
+
   position.header.frame_id = frame_id_odom;
   position.child_frame_id = frame_id_base_link;
   position.header.stamp = ros::Time::now();
   pose_pub.publish(position);
 
-  ROS_DEBUG("RosAria: publish: (time %f) pose x: %f, y: %f, angle: %f; linear vel x: %f, y: %f; angular vel z: %f", 
-    position.header.stamp.toSec(), 
+  ROS_DEBUG("RosAria: publish: (time %f) pose x: %f, y: %f, angle: %f; linear vel x: %f, y: %f; angular vel z: %f",
+    position.header.stamp.toSec(),
     (double)position.pose.pose.position.x,
     (double)position.pose.pose.position.y,
     (double)position.pose.pose.orientation.w,
@@ -553,17 +575,20 @@ void RosAriaNode::publish()
 
 
   // publishing transform odom->base_link
-  odom_trans.header.stamp = ros::Time::now();
-  odom_trans.header.frame_id = frame_id_odom;
-  odom_trans.child_frame_id = frame_id_base_link;
-  
-  odom_trans.transform.translation.x = pos.getX()/1000;
-  odom_trans.transform.translation.y = pos.getY()/1000;
-  odom_trans.transform.translation.z = 0.0;
-  odom_trans.transform.rotation = tf::createQuaternionMsgFromYaw(pos.getTh()*M_PI/180);
-  
-  odom_broadcaster.sendTransform(odom_trans);
-  
+  if(publish_odom_transform)
+  {
+     odom_trans.header.stamp = ros::Time::now();
+     odom_trans.header.frame_id = frame_id_odom;
+     odom_trans.child_frame_id = frame_id_base_link;
+
+     odom_trans.transform.translation.x = pos.getX()/1000;
+     odom_trans.transform.translation.y = pos.getY()/1000;
+     odom_trans.transform.translation.z = 0.0;
+     odom_trans.transform.rotation = tf::createQuaternionMsgFromYaw(pos.getTh()*M_PI/180);
+
+     odom_broadcaster.sendTransform(odom_trans);
+  }
+
   // getStallValue returns 2 bytes with stall bit and bumper bits, packed as (00 00 FrontBumpers RearBumpers)
   int stall = robot->getStallValue();
   unsigned char front_bumpers = (unsigned char)(stall >> 8);
@@ -590,7 +615,7 @@ void RosAriaNode::publish()
     bumper_info << " " << (rear_bumpers & (1 << (numRearBumpers-i)));
   }
   ROS_DEBUG("RosAria: Rear bumpers:%s", bumper_info.str().c_str());
-  
+
   bumpers_pub.publish(bumpers);
 
   //Publish battery information
@@ -632,7 +657,7 @@ void RosAriaNode::publish()
     cloud.header.stamp = position.header.stamp;	//copy time.
     // sonar sensors relative to base_link
     cloud.header.frame_id = frame_id_sonar;
-  
+
 
     std::stringstream sonar_debug_info; // Log debugging info
     sonar_debug_info << "Sonar readings: ";
@@ -644,7 +669,7 @@ void RosAriaNode::publish()
         ROS_WARN("RosAria: Did not receive a sonar reading.");
         continue;
       }
-    
+
       // getRange() will return an integer between 0 and 5000 (5m)
       sonar_debug_info << reading->getRange() << " ";
 
@@ -654,11 +679,11 @@ void RosAriaNode::publish()
       // x is north/south and y is east/west.
       //
       //ArPose sensor = reading->getSensorPosition();  //position of sensor.
-      // sonar_debug_info << "(" << reading->getLocalX() 
+      // sonar_debug_info << "(" << reading->getLocalX()
       //                  << ", " << reading->getLocalY()
-      //                  << ") from (" << sensor.getX() << ", " 
+      //                  << ") from (" << sensor.getX() << ", "
       //                  << sensor.getY() << ") ;; " ;
-    
+
       //add sonar readings (robot-local coordinate frame) to cloud
       geometry_msgs::Point32 p;
       p.x = reading->getLocalX() / 1000.0;
@@ -667,7 +692,7 @@ void RosAriaNode::publish()
       cloud.points.push_back(p);
     }
     ROS_DEBUG_STREAM(sonar_debug_info.str());
-    
+
     // publish topic(s)
 
     if(publish_sonar_pointcloud2)
@@ -749,5 +774,5 @@ int main( int argc, char** argv )
 
   ROS_INFO( "RosAria: Quitting... \n" );
   return 0;
-  
+
 }
