@@ -554,9 +554,9 @@ void RosAriaNode::publish()
 
   double cs = pstd_dev_speed * pstd_dev_speed * sp *sp;
   double cva = pstd_dev_angular_speed * pstd_dev_angular_speed * av * av;
-  position.twist.covariance[0] = cs;
-  position.twist.covariance[7] = cs;
-  position.twist.covariance[35] = cva;
+  position.twist.covariance[0] = cs+1e-6;
+  position.twist.covariance[7] = cs+1e-6;
+  position.twist.covariance[35] = cva+1e-6;
 
   position.header.frame_id = frame_id_odom;
   position.child_frame_id = frame_id_base_link;
